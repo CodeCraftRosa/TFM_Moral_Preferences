@@ -7,7 +7,6 @@ output: html_document
 
 #Loading Data
 ```{r}
-```{r setup, include=FALSE}
 library(readxl)
 library(ggplot2)
 library(dplyr)
@@ -30,7 +29,6 @@ Data <- read_excel('Data_CLS_US.xlsx')
 
 #Demographics 
 ```{r}
-```{r setup, include=FALSE}
 ###Mean and SD Age 
 Data$age <- as.numeric(Data$age)
 mean_age <- mean(Data$age, na.rm = TRUE)
