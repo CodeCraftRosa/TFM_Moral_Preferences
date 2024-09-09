@@ -1,0 +1,816 @@
+---
+title: "TFM - FINAL SCRIPT"
+author: "ROSAMUNDE HENDRICKS"
+date: "2024-08-20"
+output: html_document
+---
+
+#Loading Data
+```{r}
+```{r setup, include=FALSE}
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(tidyverse)
+library(ggstatsplot)
+library(gghalves)
+library(car)
+library(lmtest)
+library(lmerTest)
+library(nortest)
+library(emmeans)
+
+#Download Dataset 
+Data <- read_excel('Data_CLS_US.xlsx')
+
+```
+
+
+#Demographics 
+```{r}
+```{r setup, include=FALSE}
+###Mean and SD Age 
+Data$age <- as.numeric(Data$age)
+mean_age <- mean(Data$age, na.rm = TRUE)
+sd_age <- sd(Data$age, na.rm = TRUE)
+mean_age
+sd_age
+
+# Convert gender to numeric if it's not already
+Data$gender_numeric <- as.numeric(as.character(Data$gender))
+
+# Create indicator variables for each gender
+Data$Male <- ifelse(Data$gender == 1, 1, ifelse(Data$gender == 2 | Data$gender == 3, 0, NA))
+Data$Female <- ifelse(Data$gender == 2, 1, ifelse(Data$gender == 1 | Data$gender == 3, 0, NA))
+Data$Others <- ifelse(Data$gender == 3, 1, ifelse(Data$gender == 1 | Data$gender == 2, 0, NA))
+
+# Calculate the percentages for each gender
+percentage_male <- mean(Data$Male, na.rm = TRUE) * 100
+percentage_female <- mean(Data$Female, na.rm = TRUE) * 100
+percentage_others <- mean(Data$Others, na.rm = TRUE) * 100
+
+###Party Affiliation 
+Affiliation <- table(Data$partyAffiliation)
+print(Affiliation)
+# Calculate Percentage
+party_percentages <- prop.table(Affiliation) * 100
+print(party_percentages)
+
+#Plot Part Affiliation 
+Party_aff <- data.frame(Party = factor(names(Affiliation), levels = c("1", "2", "3")),
+                         Count = as.numeric(Affiliation))
+
+ggplot(Party_aff, aes(x = Party, y = Count, fill = Party)) +
+  geom_bar(stat = "identity", width = 0.6, color = "darkgray") + 
+  geom_text(aes(label = Count), vjust = -0.5, size = 4) +
+  labs(title = "Party Affiliation",
+       x = "Party Affiliation",
+       y = "Frequency") +
+  scale_x_discrete(labels = c("1" = "Republican", "2" = "Democratic", "3" = "Independent")) +
+  scale_fill_manual(values = c("1" = "darkred", "2" = "darkblue", "3" = "darkgreen")) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.line = element_line(color = "darkgrey"),
+    plot.title = element_text(size = 16, hjust = 0.5, face = "bold"),  
+    legend.position = "none"
+  ) +
+  coord_cartesian(ylim = c(0, 100))
+
+```
+
+#Manipulation Check 
+```{r}
+#Mani check 1: How accurate do you think the AI virtual assistant was in calculating the Moral Match of each news?
+Data <- Data %>%
+  mutate(Mani_check1 = as.numeric(ifelse(Mani_check1 == "1- Not accurate at all", 1, Mani_check1)))
+#Mean value
+mean_value <- mean(Data$Mani_check1, na.rm = TRUE)
+sd_value1 <- sd(Data$Mani_check1, na.rm = TRUE)
+
+#Mani check 2: To what extent did you believe that the AI virtual assistant was provinding real time Moral Match scores?
+Data <- Data %>%
+  mutate(Mani_check2 = ifelse(Mani_check2 == "1 - I did not believe it at all", 1,
+                               ifelse(Mani_check2 == "5 - I completely believed it", 5, as.numeric(Mani_check2))))
+#Mean value
+mean_value2 <- mean(Data$Mani_check2, na.rm = TRUE)
+sd_value2 <- sd(Data$Mani_check2, na.rm = TRUE)
+
+#Mani check 3: How much did you trust the moral match score? 
+Data <- Data %>%
+  mutate(Mani_check3 = as.numeric(ifelse(Mani_check3 == "1- I did not trust it at all", 1, Mani_check3)))
+#Mean value
+mean_value3 <- mean(Data$Mani_check3, na.rm = TRUE)
+sd_value3 <- sd(Data$Mani_check3, na.rm = TRUE)
+```
+
+#Creating Long format of Dataset and Means 
+```{r}
+#Long format
+Data_long <- Data %>%
+  pivot_longer(cols = starts_with(c("con", "lib", "neut")),
+               names_to = "variable",
+               values_to = "value") %>%
+  separate(variable, into = c("type", "version", "morality"), sep = "_", convert = TRUE) %>%
+  mutate(morality = as.factor(morality),
+         PROLIFIC_PID = as.factor(PROLIFIC_PID))  
+
+
+# Remove rows with NA values in the "value" column
+Data_long_filtered <- Data_long %>%
+  filter(!is.na(value))
+
+###Means for the different political conditions (lib, con, neut by accuracy and readability)
+Data_long_filtered <- Data_long_filtered %>%
+  mutate(type_group = sub("\\d", "", type))
+
+# Group by relevant variables and calculate means
+averages <- Data_long_filtered %>%
+  group_by(PROLIFIC_PID, version, type_group) %>%
+  summarize(mean_value_pol = mean(value, na.rm = TRUE))
+
+# Add mean values to the Data_long_filtered dataset
+Data_long_filtered <- Data_long_filtered %>%
+  left_join(averages, by = c("PROLIFIC_PID", "version", "type_group")) %>%
+  mutate(mean_value_pol = coalesce(mean_value_pol, value))
+
+# Group by relevant variables and calculate means
+averages_mor <- Data_long_filtered %>%
+  group_by(PROLIFIC_PID, version, type_group, morality) %>%
+  summarize(mean_value_moral = mean(value, na.rm = TRUE))
+
+# Add mean values to the Data_long_filtered dataset
+Data_long_filtered <- Data_long_filtered %>%
+  left_join(averages_mor, by = c("PROLIFIC_PID", "version", "type_group", "morality")) %>%
+  mutate(mean_value_moral = coalesce(mean_value_moral, value))
+
+```
+
+
+#Political Orientation on Likelihood of Reading News Posts and Perceived Accuracy (Hypothesis 1)
+```{r}
+#"1" = "Republican", "2" = "Democrat", "3" = "Independent"
+
+# Compare averages for "con" based on "partyAffiliation" variable
+con_comparison <- Data_long_filtered %>%
+  filter(type_group == "con") %>%
+  group_by(PROLIFIC_PID, partyAffiliation) %>%
+  summarize(value = mean(value, na.rm = TRUE))
+
+# Compare averages for "lib" based on "partyAffiliation" variable
+lib_comparison <- Data_long_filtered %>%
+  filter(type_group == "lib") %>%
+  group_by(PROLIFIC_PID, partyAffiliation) %>%
+  summarize(value = mean(value, na.rm = TRUE))
+
+
+                          ######################## Readability ########################
+
+# Calculate grand mean and standard deviation for each level of "partyAffiliation" for "con" and "read" version
+grand_summary_con <- Data_long_filtered %>%
+  filter(type_group == "con", version == "read") %>%
+  group_by(partyAffiliation) %>%
+  summarize(
+    grand_mean = mean(value, na.rm = TRUE),
+    grand_sd = sd(value, na.rm = TRUE)
+  )
+
+# Calculate grand mean and standard deviation for each level of "partyAffiliation" for "lib" and "read" version
+grand_summary_lib <- Data_long_filtered %>%
+  filter(type_group == "lib", version == "read") %>%
+  group_by(partyAffiliation) %>%
+  summarize(
+    grand_mean = mean(value, na.rm = TRUE),
+    grand_sd = sd(value, na.rm = TRUE)
+  )
+
+# Combine the results for plotting
+combined_grand_means_read <- rbind(
+  mutate(grand_summary_con, type_group = "conservative"),
+  mutate(grand_summary_lib, type_group = "liberal")
+)
+
+# Filter out rows with 'Independent' party affiliation
+combined_grand_means_read <- combined_grand_means_read %>% filter(partyAffiliation != "3")
+
+combined_grand_means_read$type_group <- recode(combined_grand_means_read$type_group, "conservative" = "Conservative", "liberal" = "Liberal")
+
+# Plotting 
+ggplot(combined_grand_means_read, aes(x = factor(partyAffiliation), y = grand_mean, fill = type_group)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = grand_mean - grand_sd, ymax = grand_mean + grand_sd), position = position_dodge(width = 0.9), width = 0.25) +
+  labs(x = "Party Affiliation", y = "Likelihood of Reading") +
+  scale_x_discrete(labels = c("1" = "Republican", "2" = "Democratic")) +
+  scale_fill_manual(values = c("Conservative" = "darkred", "Liberal" = "darkblue")) +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, 10)) +
+  labs(fill = "News Type") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")  
+  )
+
+# Filter the dataset for the relevant conditions
+filtered_data <- Data_long_filtered %>%
+  filter(type_group %in% c("con", "lib"), version == "read", partyAffiliation %in% c(1, 2))
+
+# Conduct ANOVA
+anova_result <- aov(value ~ type_group * partyAffiliation, data = filtered_data)
+summary(anova_result)
+
+# Conduct post hoc tests (Tukey's HSD)
+posthoc_result <- TukeyHSD(anova_result)
+print(posthoc_result)
+
+
+
+                          ######################## Accuracy ########################
+
+# Calculate grand mean and standard deviation for each level of "partyAffiliation" for "con" and "accu" version
+grand_summary_con_accu <- Data_long_filtered %>%
+  filter(type_group == "con", version == "accu") %>%
+  group_by(partyAffiliation) %>%
+  summarize(
+    grand_mean = mean(value, na.rm = TRUE),
+    grand_sd = sd(value, na.rm = TRUE)
+  )
+
+# Calculate grand mean and standard deviation for each level of "partyAffiliation" for "lib" and "accu" version
+grand_summary_lib_accu <- Data_long_filtered %>%
+  filter(type_group == "lib", version == "accu") %>%
+  group_by(partyAffiliation) %>%
+  summarize(
+    grand_mean = mean(value, na.rm = TRUE),
+    grand_sd = sd(value, na.rm = TRUE)
+  )
+
+# Combine the results for plotting
+combined_grand_means_accu <- rbind(
+  mutate(grand_summary_con_accu, type_group = "conservative"),
+  mutate(grand_summary_lib_accu, type_group = "liberal")
+)
+
+# Filter out rows with 'Independent' party affiliation
+combined_grand_means_accu <- combined_grand_means_accu %>% filter(partyAffiliation != "3")
+
+combined_grand_means_accu$type_group <- recode(combined_grand_means_accu$type_group, "conservative" = "Conservative", "liberal" = "Liberal")
+
+# Plotting 
+ggplot(combined_grand_means_accu, aes(x = factor(partyAffiliation), y = grand_mean, fill = type_group)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = grand_mean - grand_sd, ymax = grand_mean + grand_sd), position = position_dodge(width = 0.9), width = 0.25) +
+  labs(x = "Party Affiliation", y = "Perceived Accuracy") +
+  scale_x_discrete(labels = c("1" = "Republican", "2" = "Democratic")) +
+  scale_fill_manual(values = c("Conservative" = "darkred", "Liberal" = "darkblue")) +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, 10)) +
+  labs(fill = "News Type") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")  
+  )
+
+
+# Filter the dataset for the relevant conditions
+filtered_data_accu <- Data_long_filtered %>%
+  filter(type_group %in% c("con", "lib"), version == "accu", partyAffiliation %in% c(1, 2))
+
+# Conduct ANOVA
+anova_result_accu <- aov(value ~ type_group * partyAffiliation, data = filtered_data_accu)
+summary(anova_result_accu)
+
+# Conduct post hoc tests (Tukey's HSD)
+posthoc_result_accu <- TukeyHSD(anova_result_accu)
+print(posthoc_result_accu)
+
+```
+
+#All Morality Conditions by News Type 
+```{r}
+
+subset_Data<- Data_long_filtered %>%
+  select(PROLIFIC_PID, version, type_group, morality, partyAffiliation, value)
+
+                              ######################## Readability ########################
+
+#Create subset for "read"
+subset_read <- subset_Data%>%
+  filter(version == "read", partyAffiliation != 3)
+
+# Define color labels
+news_type_colors <- c("con" = "lightblue", "lib" = "lightpink", "neut" = "lightgreen")
+color_labels <- c("con" = "Conservative", "lib" = "Liberal", "neut" = "Neutral")
+facet_labels <- c("1" = "Republican", "2" = "Democrat")
+
+# Create Plot 
+ggplot(subset_read, aes(x = morality, y = value, color = type_group)) +
+  geom_half_violin(aes(fill = type_group), trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7, color = news_type_colors[subset_read$type_group]) +
+  geom_boxplot(width = 0.4, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 16,
+    size = 3,
+    position = position_dodge(0.8),
+    aes(group = partyAffiliation),
+    color = "black"
+  ) +
+  labs(
+       x = "Morality",
+       y = "Value") +
+  facet_wrap(~partyAffiliation, scales = "free", labeller = as_labeller(facet_labels)) +
+  scale_color_manual(name = "News Type", values = c("con" = "lightblue", "lib" = "lightpink", "neut" = "lightgreen"), labels = c("Conservative", "Liberal", "Neutral")) +
+  scale_fill_manual(name = "News Type", values = c("con" = "lightblue", "lib" = "lightpink", "neut" = "lightgreen"), labels = c("Conservative", "Liberal", "Neutral")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+                              ########################  Accuracy  ########################
+
+# Create subset for "accu"
+subset_accu <- subset_Data%>%
+  filter(version == "accu", partyAffiliation != 3)
+
+# Create Plot 
+ggplot(subset_accu, aes(x = morality, y = value, color = type_group)) +
+  geom_half_violin(aes(fill = type_group), trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7, color = news_type_colors[subset_read$type_group]) +
+  geom_boxplot(width = 0.4, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 16,
+    size = 3,
+    position = position_dodge(0.8),
+    aes(group = partyAffiliation),
+    color = "black"
+  ) +
+  labs(
+       x = "Morality",
+       y = "Value") +
+  facet_wrap(~partyAffiliation, scales = "free", labeller = as_labeller(facet_labels)) +
+  scale_color_manual(name = "News Type", values = c("con" = "lightblue", "lib" = "lightpink", "neut" = "lightgreen"), labels = c("Conservative", "Liberal", "Neutral")) +
+  scale_fill_manual(name = "News Type", values = c("con" = "lightblue", "lib" = "lightpink", "neut" = "lightgreen"), labels = c("Conservative", "Liberal", "Neutral")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+#Add new variable Political match
+```{r}
+Data_long_filtered <- Data_long_filtered %>%
+  mutate(political_match = case_when(
+    type_group == "lib" & partyAffiliation == 1 ~ "mismatch",
+    type_group == "lib" & partyAffiliation == 2 ~ "match",
+    type_group == "con" & partyAffiliation == 1 ~ "match",
+    type_group == "con" & partyAffiliation == 2 ~ "mismatch",
+    type_group == "neut" & partyAffiliation %in% c(1, 2) ~ "neutral",
+    TRUE ~ NA_character_
+  ))
+
+# Filter out rows with NA values in the "value" variable
+Data_long_filtered_noNA <- Data_long_filtered %>%
+  filter(!is.na(political_match))
+```
+
+
+#Mismatch by Political Match for Readability and Accuracy (Plots)
+```{r}
+
+                          ######################## Readability ########################
+#Filter for "read" condition
+Data_long_filtered_noNA_read <- Data_long_filtered %>%
+  filter(!is.na(political_match), version == "read")
+
+# Plot
+ggplot(Data_long_filtered_noNA_read, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  stat_summary(fun.y = "mean", geom = "point", position = position_dodge(0.8), size = 3, shape = 16) +  # Add points for mean values
+  labs(title = "Mean Value for Likelihood to Read for Morality Match by Political Match",
+       x = "Political Match",
+       y = "Mean Value",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "Match", "mismatch" = "Mismatch", "neutral" = "Neutral")) +
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+############## Filter the data for the level of "mismatch" in "political_match"
+mismatch_data_read <- Data_long_filtered_noNA_read %>%
+  filter(political_match == "mismatch")
+
+# Plot for the level of "mismatch" separated by "morality"
+ggplot(mismatch_data_read, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  labs(title = "Mean Value for Likelihood to Read for Morality Match by News Items (Mismatch)",
+       x = "Political Match",
+       y = "Value",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "Match", "mismatch" = "Mismatch", "neutral" = "Neutral")) +
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+# Filter the data for the level of "mismatch" in "political_match" and "read" version
+read_mismatch_data <- Data_long_filtered_noNA %>%
+  filter(political_match == "mismatch" & version == "read")
+
+# Calculate mean values for each level of "political_match" and "morality" in "read" version
+mean_values_read <- read_mismatch_data %>%
+  group_by(political_match, morality) %>%
+  summarize(mean_value = mean(value))
+
+# Plot for the level of "mismatch" in "read" version, separated by "morality"
+ggplot(read_mismatch_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_read, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x = "Morality Match for Political Mismatch Items",  
+       y = "Likelihood of Reading",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free", switch = "x", labeller = labeller(morality = c(control = "Control", mismatch = "Mismatch", match = "Match"))) +  
+  ylim(-3, 12.5) +  
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")
+                          ########################  Accuracy   ########################
+
+#Filter for "accu" condition
+Data_long_filtered_noNA_accu <- Data_long_filtered %>%
+  filter(!is.na(political_match), version == "accu")
+
+# Plot
+ggplot(Data_long_filtered_noNA_accu, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  stat_summary(fun.y = "mean", geom = "point", position = position_dodge(0.8), size = 3, shape = 16) +  # Add points for mean values
+  labs(title = "Mean Value for Accuracy for Morality Match by Political Match",
+       x = "Political Match",
+       y = "Mean Value",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  
+        plot.title = element_text(hjust = 0.5))
+
+# Filter the data for the level of "mismatch" in "political_match" and "accu" version
+accu_mismatch_data <- Data_long_filtered_noNA %>%
+  filter(political_match == "mismatch" & version == "accu")
+
+# Calculate mean values for each level of "political_match" and "morality" in "accu" version
+mean_values_accu <- accu_mismatch_data %>%
+  group_by(political_match, morality) %>%
+  summarize(mean_value = mean(value))
+
+# Plot for the level of "mismatch" in "accu" version, separated by "morality"
+ggplot(accu_mismatch_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_accu, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x ="Political Match", 
+       y = "Perceived Accuracy",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  # Remove x-axis text
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")  
+
+# Plot for the level of "mismatch" in "accu" version, separated by "morality"
+ggplot(accu_mismatch_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_accu, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x ="Morality Match for Political Mismatch Items", 
+       y = "Perceived Accuracy",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free", switch = "x", labeller = labeller(morality = c(control = "Control",mismatch = "Mismatch",match = "Match"))) +  # Use labeller to customize facet labels
+  ylim(-3, 12.5) +  
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")  
+
+
+```
+
+
+#Match by Political Match for Readability and Accuracy  (Plots)
+```{r}
+
+                          ######################## Readability ########################
+
+# Filter the data for the level of "match" in "political_match"
+match_data_read <- Data_long_filtered_noNA_read %>%
+  filter(political_match == "match")
+
+# Plot for the level of "match" separated by "morality"
+ggplot(match_data_read, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  labs(title = "Mean Value for Likelihood to Read for Morality Match by News Items (Match)",
+       x = "Political Match",
+       y = "Value",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "Match", "mismatch" = "Mismatch", "neutral" = "Neutral")) +
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+# Filter the data for the level of "match" in "political_match" and "read" version
+read_match_data <- Data_long_filtered_noNA %>%
+  filter(political_match == "match" & version == "read")
+
+# Calculate mean values for each level of "political_match" and "morality" in "read" version
+mean_values_read_match <- read_match_data %>%
+  group_by(political_match, morality) %>%
+  summarize(mean_value = mean(value))
+
+# Plot for the level of "match" in "read" version, separated by "morality"
+ggplot(read_match_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_read_match, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x = "Morality Match for Political Match Items",  # Adjust x-axis label
+       y = "Likelihood of Reading",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free", switch = "x", labeller = labeller(morality = c(control = "Control", mismatch = "Mismatch", match = "Match"))) +  
+  ylim(-3, 12.5) +  
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")
+
+                          ########################  Accuracy   ########################
+
+# Filter the data for the level of "match" in "political_match" and "accu" version
+accu_match_data <- Data_long_filtered_noNA %>%
+  filter(political_match == "match" & version == "accu")
+
+# Calculate mean values for each level of "political_match" and "morality" in "accu" version
+mean_values_accu_match <- accu_match_data %>%
+  group_by(political_match, morality) %>%
+  summarize(mean_value = mean(value))
+
+# Plot for the level of "match" in "accu" version, separated by "morality"
+ggplot(accu_match_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_accu_match, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x = "Political Match",
+       y = "Perceived Accuracy",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  # Remove x-axis text
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")
+
+# Plot for the level of "match" in "accu" version, separated by "morality"
+ggplot(accu_match_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_accu_match, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x = "Morality Match for Political Match Items",
+       y = "Perceived Accuracy",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free", switch = "x", labeller = labeller(morality = c(control = "Control", mismatch = "Mismatch", match = "Match"))) +  
+  ylim(-3, 12.5) +  
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")
+
+```
+
+#Control by Political Match for Readability and Accuracy (Plots)
+```{r}
+# Filter the data for the level of "neutral" in "political_match" and "read" version
+read_neutral_data <- Data_long_filtered_noNA_read %>%
+  filter(political_match == "neutral")
+
+# Calculate mean values for each level of "political_match" and "morality" in "read" version
+mean_values_read_neutral <- read_neutral_data %>%
+  group_by(political_match, morality) %>%
+  summarize(mean_value = mean(value))
+
+ggplot(read_neutral_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_read_neutral, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x = "Morality Match for Political Neutral Items",  # Adjust x-axis label
+       y = "Likelihood of Reading",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free", switch = "x", labeller = labeller(morality = c(control = "Control", mismatch = "Mismatch", match = "Match"))) +  
+  theme_minimal() +
+  ylim(-3, 12.5) +  
+  theme(axis.text.x = element_blank(),  # Remove x-axis text
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")
+
+
+# Filter the data for the level of "control" in "political_match" and "accu" version
+accu_neutral_data <- Data_long_filtered_noNA %>%
+  filter(political_match == "neutral" & version == "accu")
+
+# Calculate mean values for each level of "political_match" and "morality" in "accu" version
+mean_values_accu_neutral <- accu_neutral_data %>%
+  group_by(political_match, morality) %>%
+  summarize(mean_value = mean(value))
+
+# Plot for the level of "control" in "accu" version, separated by "morality"
+ggplot(accu_neutral_data, 
+       aes(x = political_match, y = value, color = morality, fill = morality)) +
+  geom_half_violin(trim = FALSE, position = position_nudge(x = -0.3), scale = "width", alpha = 0.7, width = 0.5) +
+  geom_jitter(position = position_jitter(width = 0.2), size = 2, alpha = 0.7) +
+  geom_boxplot(width = 0.5, position = position_dodge(0.8), color = "black", fill = "white", alpha = 0.7) +
+  geom_point(data = mean_values_accu_neutral, aes(x = political_match, y = mean_value), 
+             position = position_dodge(0.8), color = "black", size = 3, shape = 16) +
+  labs(
+       x = "Morality Match for Political Neutral Items",
+       y = "Perceived Accuracy",
+       color = "Morality",
+       fill = "Morality") +
+  scale_x_discrete(labels = c("match" = "", "mismatch" = "", "neutral" = "")) +  # Remove x-axis labels
+  scale_color_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  scale_fill_manual(values = c("match" = "lightblue", "mismatch" = "lightpink", "control" = "lightgreen"), name = "Morality") +
+  facet_wrap(~morality, scales = "free", switch = "x", labeller = labeller(morality = c(control = "Control", mismatch = "Mismatch", match = "Match"))) +  
+  theme_minimal() +
+  ylim(-3, 12.5) +  
+  theme(axis.text.x = element_blank(),  
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none")
+```
+
+#Statistical Analysis (Mixed Models)
+```{r}
+
+                         ########################  Accuracy   ########################
+
+#Make control and neutral the reference categories 
+Data_long_filtered_noNA_accu$political_match <- as.factor(Data_long_filtered_noNA_accu$political_match)
+Data_long_filtered_noNA_accu$morality <- relevel(Data_long_filtered_noNA_accu$morality, ref = "control")
+Data_long_filtered_noNA_accu$political_match <- relevel(Data_long_filtered_noNA_accu$political_match, ref = "neutral")
+
+# Fit the mixed-effects model
+mixed_model_accu <- lmer(value ~ morality * political_match + (1 | PROLIFIC_PID),  
+                         data = Data_long_filtered_noNA_accu)
+summary(mixed_model_accu)
+
+# Add confidence intervals to the fixed effects
+confint(mixed_model_accu)
+
+#Compare contrasts with emmeans
+em_model_accu <- emmeans(mixed_model_accu,pairwise ~ morality|political_match )
+em_model_accu
+confint(em_model_accu)
+
+                          ######################## Readability ########################
+
+#Make control and neutral the reference categories 
+Data_long_filtered_noNA_read$political_match <- as.factor(Data_long_filtered_noNA_read$political_match)
+Data_long_filtered_noNA_read$morality <- relevel(Data_long_filtered_noNA_read$morality, ref = "control")
+Data_long_filtered_noNA_read$political_match <- relevel(Data_long_filtered_noNA_read$political_match, ref = "neutral")
+
+
+#Mixed-effects model
+mixed_model_read_filtered <- lmer(value ~ morality * political_match + (1 | PROLIFIC_PID),  
+                     data = Data_long_filtered_noNA_read)
+summary(mixed_model_read_filtered)
+
+# Add confidence intervals to the fixed effects
+confint(mixed_model_read_filtered)
+
+#Compare contrasts with emmeans
+em_model_read <- emmeans(mixed_model_read_filtered,pairwise ~ morality|political_match )
+em_model_read
+confint(em_model_read)
+
+```
+
+#Model Assumption Checks 
+```{r}
+# Extract residuals and fitted values
+residuals <- residuals(mixed_model_read_filtered)
+fitted_values <- fitted(mixed_model_read_filtered)
+
+# 1. Linearity
+plot(fitted_values, residuals, 
+     xlab = "Fitted Values", 
+     ylab = "Residuals", 
+     main = "Residuals vs Fitted Values")
+abline(h = 0, col = "red")
+
+lines(lowess(fitted_values, residuals), col = "blue")
+
+# 2. Homoscedasticity (Constant Variance)
+#Breusch-Pagan test
+bptest(lm(residuals ~ fitted_values))
+
+# 3. Independence of Errors
+#Durbin-Watson test
+dwtest(lm(residuals ~ fitted_values))
+
+# 4. Normality of Errors
+# Plot a Q-Q plot
+qqnorm(residuals, main = "Q-Q Plot")
+qqline(residuals, col = "red")
+
+# Histogram of residuals
+hist(residuals, breaks = 30, main = "Histogram of Residuals", xlab = "Residuals")
+
+#Shapiro-Wilk test
+shapiro.test(residuals)
+
+#Anderson-Darling test
+ad.test(residuals)
+
+```
+
+
+
